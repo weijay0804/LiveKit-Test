@@ -98,6 +98,36 @@
       color: var(--text-muted);
     }
 
+    select {
+      width: 100%;
+      padding: 14px 16px;
+      border-radius: 12px;
+      border: 2px solid var(--bg-card);
+      background: #0e1530;
+      color: var(--text-primary);
+      font-size: 16px;
+      transition: border-color 0.2s ease, box-shadow 0.2s ease;
+      -webkit-appearance: none;
+      appearance: none;
+      background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='%23e9eef9' viewBox='0 0 16 16'%3E%3Cpath d='M8 13.1l-8-8 2.1-2.1L8 9 13.9 3 16 5.1z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      background-size: 16px 16px;
+      padding-right: 40px;
+    }
+
+    select:focus {
+      outline: none;
+      border-color: var(--primary-color);
+      box-shadow: 0 0 0 3px rgba(45, 124, 240, 0.1);
+    }
+
+    select option {
+      background: #0e1530;
+      color: var(--text-primary);
+      padding: 8px;
+    }
+
     .row {
       display: grid;
       grid-template-columns: 1fr;
@@ -409,18 +439,30 @@
       <div class="grid-3">
         <div>
           <label>解析度</label>
-          <input id="res" value="1280x720" />
+          <select id="res">
+            <option value="640x480">480p (640x480)</option>
+            <option value="960x540">540p (960x540)</option>
+            <option value="1280x720" selected>720p HD (1280x720)</option>
+            <option value="1920x1080">1080p FHD (1920x1080)</option>
+            <option value="2560x1440">1440p QHD (2560x1440)</option>
+            <option value="3840x2160">4K UHD (3840x2160)</option>
+          </select>
         </div>
         <div>
           <label>FPS</label>
-          <input id="fps" value="30" />
+          <select id="fps">
+            <option value="15">15 FPS</option>
+            <option value="24">24 FPS</option>
+            <option value="30" selected>30 FPS</option>
+            <option value="60">60 FPS</option>
+          </select>
         </div>
         <div>
           <label>GOP（秒，鍵影格間隔）</label>
           <input id="gop" value="2" />
         </div>
       </div>
-      <p class="hint">提示：iOS 需使用者手勢啟動；本頁面透過「連線並推流」按鈕取得相機/麥克風權限。建議在低光環境降低 FPS/解析度。</p>
+      <p class="hint">📱 <strong>解析度建議：</strong> 720p 適合大部分手機，1080p 提供更好畫質，1440p/4K 適合旗艦手機。高解析度需要更多頻寬和電力。</p>
     </div>
   </div>
 
@@ -516,6 +558,85 @@
   }
 
   // 相機與音訊優化（LiveKit Room API 內建處理）
+  
+  // 解析解析度字符串
+  function parseResolution(resStr) {
+    try {
+      const [widthStr, heightStr] = (resStr || '1280x720').split('x');
+      const width = parseInt(widthStr, 10);
+      const height = parseInt(heightStr, 10);
+      
+      // 驗證解析度
+      if (width < 320 || height < 240) {
+        console.warn('解析度過低，使用最小值 640x480');
+        return { width: 640, height: 480 };
+      }
+      if (width > 3840 || height > 2160) {
+        console.warn('解析度過高，使用最大值 3840x2160');
+        return { width: 3840, height: 2160 };
+      }
+      
+      return { width, height };
+    } catch (error) {
+      console.warn('解析度格式錯誤，使用預設值 1280x720:', error);
+      return { width: 1280, height: 720 };
+    }
+  }
+  
+  // 獲取當前設定的解析度和幀率
+  function getCurrentMediaSettings() {
+    const resolution = parseResolution($('res').value);
+    const fps = Math.max(15, Math.min(60, parseInt($('fps').value || '30', 10)));
+    return { resolution, fps };
+  }
+
+  // 檢查解析度和效能建議
+  function validateMediaSettings(resolution, fps) {
+    const pixels = resolution.width * resolution.height;
+    const bitrate = pixels * fps * 0.1; // 簡單估算所需位元率
+    
+    let warnings = [];
+    let recommendations = [];
+    
+    // 高解析度警告
+    if (pixels >= 3840 * 2160) { // 4K
+      warnings.push('4K 解析度需要強大的硬體和高速網路');
+      recommendations.push('建議確保網路頻寬至少 25Mbps');
+    } else if (pixels >= 2560 * 1440) { // 1440p
+      warnings.push('1440p 解析度需要較好的硬體效能');
+      recommendations.push('建議確保網路頻寬至少 15Mbps');
+    } else if (pixels >= 1920 * 1080) { // 1080p
+      recommendations.push('1080p 提供優良畫質，建議網路頻寬至少 8Mbps');
+    }
+    
+    // 高幀率警告
+    if (fps >= 60) {
+      warnings.push('60 FPS 需要更多運算資源和頻寬');
+    }
+    
+    // 組合警告
+    if (pixels >= 1920 * 1080 && fps >= 60) {
+      warnings.push('高解析度 + 高幀率組合會大幅增加電力和網路消耗');
+    }
+    
+    return { warnings, recommendations, estimatedBitrate: Math.round(bitrate) };
+  }
+
+  // 顯示解析度建議
+  function showResolutionAdvice() {
+    const { resolution, fps } = getCurrentMediaSettings();
+    const { warnings, recommendations } = validateMediaSettings(resolution, fps);
+    
+    if (warnings.length > 0 || recommendations.length > 0) {
+      const messages = [...warnings, ...recommendations];
+      console.log('媒體設定建議:', messages.join('; '));
+      
+      // 可以在這裡添加 UI 提示
+      if (warnings.length > 0) {
+        console.warn('注意事項:', warnings.join('; '));
+      }
+    }
+  }
 
   // 相機權限檢查與錯誤恢復
   async function checkCameraPermissions() {
@@ -800,13 +921,17 @@
 
       // 啟用相機和麥克風
       try {
-        console.log('正在啟用相機，模式:', facing);
+        const { resolution, fps } = getCurrentMediaSettings();
+        console.log('正在啟用相機，模式:', facing, '解析度:', resolution, 'FPS:', fps);
+        
+        // 顯示效能建議
+        showResolutionAdvice();
         
         // 啟用相機
         await room.localParticipant.setCameraEnabled(true, {
           facingMode: facing,
-          resolution: { width: 1280, height: 720 },
-          frameRate: 30
+          resolution: resolution,
+          frameRate: fps
         });
         
         // 啟用麥克風
@@ -860,7 +985,8 @@
     if(!room || !joined) return;
     try{
       const next = (facing==='environment') ? 'user' : 'environment';
-      console.log('切換鏡頭從', facing, '到', next);
+      const { resolution, fps } = getCurrentMediaSettings();
+      console.log('切換鏡頭從', facing, '到', next, '解析度:', resolution, 'FPS:', fps);
       
       // 先關閉相機
       await room.localParticipant.setCameraEnabled(false);
@@ -868,8 +994,8 @@
       // 重新啟用相機，使用新的 facingMode
       await room.localParticipant.setCameraEnabled(true, {
         facingMode: next,
-        resolution: { width: 1280, height: 720 },
-        frameRate: 30
+        resolution: resolution,
+        frameRate: fps
       });
       
       // 預覽將通過事件監聽器自動更新
@@ -1011,6 +1137,10 @@
   $('btnMuteAudio').addEventListener('click', toggleAudio, {passive:true});
   $('btnMuteVideo').addEventListener('click', toggleVideo, {passive:true});
   $('fullscreenBtn').addEventListener('click', toggleFullscreen, {passive:true});
+  
+  // 解析度和 FPS 選擇變化時顯示建議
+  $('res').addEventListener('change', showResolutionAdvice);
+  $('fps').addEventListener('change', showResolutionAdvice);
 
 </script>
 </body>
