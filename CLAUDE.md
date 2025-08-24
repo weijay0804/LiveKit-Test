@@ -1,0 +1,1 @@
+這個專案的套件管理是使用 PDM，所以有關套件的安裝是使用 `pdm install ...`，不要直接更改 pyproject.toml

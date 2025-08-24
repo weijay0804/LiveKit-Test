@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <title>LiveKit Cloud Viewer (純 HTML)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; margin: 24px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    input, button { padding: 8px 10px; font-size: 14px; }
+    #status { margin: 8px 0 16px; color: #555; }
+    .stage { position: relative; width: 100%; max-width: 960px; }
+    video { width: 100%; height: auto; background:#000; border-radius: 12px; }
+  </style>
+</head>
+<body>
+  <h1>LiveKit Cloud Viewer</h1>
+
+  <div class="row">
+    <button id="joinBtn">加入房間</button>
+    <button id="leaveBtn" disabled>離開</button>
+  </div>
+
+  <div id="status">尚未連線。</div>
+
+  <div class="stage">
+    <video id="video" autoplay playsinline muted controls></video>
+  </div>
+
+  <script type="module">
+    import { Room, RoomEvent, Track, setLogLevel } from 'https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.esm.mjs';
+
+    const els = {
+      joinBtn: document.getElementById('joinBtn'),
+      leaveBtn: document.getElementById('leaveBtn'),
+      video: document.getElementById('video'),
+      status: document.getElementById('status'),
+    };
+
+
+    setLogLevel('info');
+
+    let room = null;
+
+    function setStatus(msg) {
+      els.status.textContent = msg;
+      console.log('[status]', msg);
+    }
+
+    function attachTrack(track) {
+      if (track.kind === Track.Kind.Video || track.kind === Track.Kind.Audio) {
+        try { track.detach(els.video); } catch {}
+        track.attach(els.video);
+      }
+    }
+
+
+
+    async function join() {
+      els.joinBtn.disabled = true;
+      
+      let wsUrl, token;
+      
+      try {
+        // 從後端 API 獲取連接資訊
+        setStatus('獲取連接資訊中...');
+        const response = await fetch('/api/token');
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        const data = await response.json();
+        wsUrl = data.server_url;
+        token = data.token;
+        setStatus(`連接資訊已獲取，房間：${data.room}，身份：${data.identity}`);
+
+        // 創建房間並設定事件監聽器
+        room = new Room({
+          adaptiveStream: true,
+          dynacast: true,
+        });
+
+        room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
+          attachTrack(track);
+          setStatus(`已訂閱來自 ${participant.identity} 的 ${track.kind}。`);
+        });
+
+        room.on(RoomEvent.ParticipantConnected, (p) => {
+          setStatus(`參與者加入：${p.identity}`);
+        });
+
+        room.on(RoomEvent.Disconnected, () => {
+          setStatus('已離線。');
+          els.leaveBtn.disabled = true;
+          els.joinBtn.disabled = false;
+        });
+
+        // 連接到房間
+        setStatus('連線中…');
+        await room.connect(wsUrl, token);
+        setStatus(`已連線，房間：${room.name}，本機身份：${room.localParticipant.identity}`);
+
+        // 處理已存在的參與者軌道
+        room.remoteParticipants.forEach((p) => {
+          for (const pub of p.trackPublications.values()) {
+            if (pub.track) attachTrack(pub.track);
+          }
+        });
+
+        els.leaveBtn.disabled = false;
+
+      } catch (err) {
+        console.error(err);
+        alert('連接失敗：' + (err?.message || err));
+        setStatus('連接失敗。');
+        els.joinBtn.disabled = false;
+      }
+    }
+
+    async function leave() {
+      try {
+        await room?.disconnect();
+      } finally {
+        room = null;
+        els.leaveBtn.disabled = true;
+        els.joinBtn.disabled = false;
+        setStatus('已離開房間。');
+      }
+    }
+
+
+    els.joinBtn.addEventListener('click', join);
+    els.leaveBtn.addEventListener('click', leave);
+  </script>
+</body>
+</html>
