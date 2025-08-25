@@ -75,17 +75,11 @@ async def get_publisher_token(room: str = "Drone-RTC-01", identity: str = None) 
         # 如果沒有提供身份，自動生成一個
         if not identity:
             identity = f"mobile-publisher-{secrets.token_hex(4)}"
-        
+
         at = (
             api.AccessToken(API_KEY, API_SECRET)
             .with_identity(identity)
-            .with_grants(api.VideoGrants(
-                room=room, 
-                room_join=True, 
-                can_subscribe=True, 
-                can_publish=True,
-                can_publish_data=True
-            ))
+            .with_grants(api.VideoGrants(room=room, room_join=True, can_subscribe=True, can_publish=True, can_publish_data=True))
         )
         return {"identity": identity, "token": at.to_jwt(), "server_url": SERVER_URL, "room": room}
     except Exception as e:
