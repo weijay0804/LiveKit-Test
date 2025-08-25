@@ -58,7 +58,7 @@
       min-width: 200px;
     }
 
-    input, button { 
+    input, button, select { 
       padding: 10px 16px; 
       font-size: 14px;
       border-radius: 8px;
@@ -76,6 +76,24 @@
       outline: none;
       border-color: var(--primary-color);
       box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+
+    select {
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      cursor: pointer;
+      min-width: 100px;
+    }
+
+    select:focus {
+      outline: none;
+      border-color: var(--primary-color);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+
+    .quality-select {
+      font-size: 12px;
+      padding: 8px 12px;
     }
 
     button {
@@ -105,6 +123,16 @@
 
     button.danger:hover {
       background: #dc2626;
+    }
+
+    button.secondary {
+      background: var(--secondary-color);
+      padding: 8px 12px;
+      font-size: 12px;
+    }
+
+    button.secondary:hover {
+      background: #4a5568;
     }
 
     .rooms-container {
@@ -247,7 +275,7 @@
   </div>
 
   <script type="module">
-    import { Room, RoomEvent, Track, setLogLevel } from 'https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.esm.mjs';
+    import { Room, RoomEvent, Track, VideoQuality, setLogLevel } from 'https://cdn.jsdelivr.net/npm/livekit-client@2/dist/livekit-client.esm.mjs';
 
     setLogLevel('info');
 
@@ -313,10 +341,23 @@
           </div>
           <div class="room-video">
             <video autoplay playsinline muted controls></video>
+            <div class="video-stats" style="position: absolute; bottom: 8px; left: 8px; background: rgba(0,0,0,0.7); color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-family: monospace; display: none;">
+              <div class="stat-line">解析度: <span class="resolution">--</span></div>
+              <div class="stat-line">位元率: <span class="bitrate">--</span></div>
+              <div class="stat-line">幀率: <span class="framerate">--</span></div>
+            </div>
           </div>
           <div class="room-controls">
             <div class="room-info">準備連線...</div>
+            <select class="quality-select" title="視頻品質">
+              <option value="auto">自動品質</option>
+              <option value="high" selected>高品質</option>
+              <option value="medium">中品質</option>
+              <option value="low">低品質</option>
+            </select>
             <button class="connect-btn">連線</button>
+            <button class="stats-btn secondary" title="顯示/隱藏統計">📊</button>
+            <button class="force-hq-btn secondary" title="強制重新請求高品質">🔄</button>
             <button class="remove-btn danger">移除</button>
           </div>
         `;
@@ -324,9 +365,15 @@
         // 添加事件監聽器
         const connectBtn = roomCard.querySelector('.connect-btn');
         const removeBtn = roomCard.querySelector('.remove-btn');
+        const qualitySelect = roomCard.querySelector('.quality-select');
+        const statsBtn = roomCard.querySelector('.stats-btn');
+        const forceHqBtn = roomCard.querySelector('.force-hq-btn');
 
         connectBtn.addEventListener('click', () => this.toggleConnection(roomName));
         removeBtn.addEventListener('click', () => this.removeRoom(roomName));
+        qualitySelect.addEventListener('change', () => this.changeVideoQuality(roomName));
+        statsBtn.addEventListener('click', () => this.toggleVideoStats(roomName));
+        forceHqBtn.addEventListener('click', () => this.forceHighQuality(roomName));
 
         return roomCard;
       }
@@ -338,7 +385,13 @@
           video: roomCard.querySelector('video'),
           status: roomCard.querySelector('.room-status'),
           info: roomCard.querySelector('.room-info'),
-          connectBtn: roomCard.querySelector('.connect-btn')
+          connectBtn: roomCard.querySelector('.connect-btn'),
+          qualitySelect: roomCard.querySelector('.quality-select'),
+          statsBtn: roomCard.querySelector('.stats-btn'),
+          videoStats: roomCard.querySelector('.video-stats'),
+          statsResolution: roomCard.querySelector('.resolution'),
+          statsBitrate: roomCard.querySelector('.bitrate'),
+          statsFramerate: roomCard.querySelector('.framerate')
         };
       }
 
@@ -362,7 +415,7 @@
           // 創建 LiveKit Room
           const room = new Room({
             adaptiveStream: true,
-            dynacast: true,
+            dynacast: true
           });
 
           // 設定事件監聽器
@@ -394,8 +447,45 @@
 
         room.on(RoomEvent.TrackSubscribed, (track, publication, participant) => {
           console.log(`房間 ${roomName} 收到軌道:`, track.kind, 'from', participant.identity);
+          
+          // 如果是視頻軌道，強制設定為最高品質
+          if (track.kind === 'video') {
+            // 強制設定為最高品質，忽略UI選擇
+            try {
+              publication.setVideoQuality(VideoQuality.HIGH);
+              console.log(`強制設定最高視頻品質 (HIGH) for ${participant.identity}`);
+              
+              // 檢查可用的 simulcast 層級
+              setTimeout(() => {
+                const videoTrack = publication.videoTrack;
+                if (videoTrack && videoTrack.track) {
+                  const settings = videoTrack.track.getSettings();
+                  console.log(`實際視頻設定:`, settings);
+                  console.log(`可用品質層級:`, publication.videoQuality);
+                }
+              }, 1000);
+              
+            } catch (error) {
+              console.warn('設定視頻品質失敗:', error);
+            }
+            
+            // 額外的品質強化：禁用自適應降品質
+            if (publication.videoTrack) {
+              const videoElement = roomData.elements.video;
+              // 設定更高的優先級
+              if (videoElement.srcObject) {
+                const stream = videoElement.srcObject;
+                const videoTracks = stream.getVideoTracks();
+                videoTracks.forEach(track => {
+                  const constraints = track.getConstraints();
+                  console.log('當前軌道約束:', constraints);
+                });
+              }
+            }
+          }
+          
           this.attachTrack(track, roomData.elements.video);
-          roomData.elements.info.textContent = `正在播放來自 ${participant.identity} 的 ${track.kind}`;
+          roomData.elements.info.textContent = `正在播放來自 ${participant.identity} 的 ${track.kind} | 強制高品質模式`;
         });
 
         room.on(RoomEvent.ParticipantConnected, (participant) => {
@@ -414,10 +504,25 @@
           roomData.room = null;
         });
 
-        // 處理已存在的軌道
+        // 處理已存在的軌道 - 強制最高品質
         room.remoteParticipants.forEach((participant) => {
           participant.trackPublications.forEach((publication) => {
             if (publication.track) {
+              // 如果是視頻軌道，強制設定為最高品質
+              if (publication.track.kind === 'video') {
+                try {
+                  publication.setVideoQuality(VideoQuality.HIGH);
+                  console.log(`設定已存在視頻軌道為最高品質 (HIGH) for ${participant.identity}`);
+                  
+                  // 立即檢查並報告實際品質
+                  setTimeout(() => {
+                    this.reportVideoQuality(roomName, publication, participant.identity);
+                  }, 500);
+                  
+                } catch (error) {
+                  console.warn('設定已存在軌道品質失敗:', error);
+                }
+              }
               this.attachTrack(publication.track, roomData.elements.video);
             }
           });
@@ -448,6 +553,9 @@
         const roomData = this.rooms.get(roomName);
         if (!roomData) return;
 
+        // 停止統計監控
+        this.stopStatsMonitoring(roomName);
+
         // 斷開連接
         if (roomData.room) {
           await roomData.room.disconnect();
@@ -466,6 +574,205 @@
 
         console.log(`房間 ${roomName} 已移除`);
       }
+
+      async changeVideoQuality(roomName) {
+        const roomData = this.rooms.get(roomName);
+        if (!roomData || !roomData.room || roomData.status !== 'connected') return;
+
+        const quality = roomData.elements.qualitySelect.value;
+        console.log(`房間 ${roomName} 切換視頻品質到: ${quality}`);
+
+        try {
+          // 根據品質設定調整 simulcast 層級偏好
+          const qualitySettings = this.getQualitySettings(quality);
+          
+          // 重新訂閱視頻軌道以應用新品質設定
+          roomData.room.remoteParticipants.forEach(participant => {
+            participant.videoTrackPublications.forEach(publication => {
+              if (publication.track && publication.isSubscribed) {
+                // 設定品質偏好
+                publication.setVideoQuality(qualitySettings.layer);
+              }
+            });
+          });
+
+          roomData.elements.info.textContent += ` | 品質: ${this.getQualityLabel(quality)}`;
+        } catch (error) {
+          console.error(`切換品質失敗:`, error);
+        }
+      }
+
+      getQualitySettings(quality) {
+        const settings = {
+          'high': { layer: VideoQuality.HIGH, maxBitrate: 2000000 },
+          'medium': { layer: VideoQuality.MEDIUM, maxBitrate: 1000000 },
+          'low': { layer: VideoQuality.LOW, maxBitrate: 500000 },
+          'auto': { layer: VideoQuality.HIGH, maxBitrate: 2500000 }
+        };
+        return settings[quality] || settings['auto'];
+      }
+
+      getQualityLabel(quality) {
+        const labels = {
+          'high': '高品質',
+          'medium': '中品質', 
+          'low': '低品質',
+          'auto': '自動'
+        };
+        return labels[quality] || '自動';
+      }
+
+      // 新增：報告視頻品質詳細資訊
+      reportVideoQuality(roomName, publication, participantIdentity) {
+        const roomData = this.rooms.get(roomName);
+        if (!roomData) return;
+
+        console.log(`=== 視頻品質報告 for ${participantIdentity} ===`);
+        
+        if (publication.videoTrack) {
+          const track = publication.videoTrack.track;
+          if (track) {
+            const settings = track.getSettings();
+            console.log('當前視頻設定:', {
+              width: settings.width,
+              height: settings.height,
+              frameRate: settings.frameRate,
+              facingMode: settings.facingMode
+            });
+          }
+
+          // 檢查 simulcast 品質層級
+          console.log('Publication 狀態:', {
+            subscribed: publication.isSubscribed,
+            enabled: publication.isEnabled,
+            muted: publication.isMuted,
+            currentVideoQuality: publication.videoQuality,
+            dimensions: publication.dimensions
+          });
+
+          // 檢查位元率
+          const currentBitrate = publication.videoTrack.currentBitrate;
+          console.log('當前位元率:', currentBitrate, 'bps');
+        }
+        console.log('=== 品質報告結束 ===');
+      }
+
+      // 新增：強制重新請求高品質
+      async forceHighQuality(roomName) {
+        const roomData = this.rooms.get(roomName);
+        if (!roomData || !roomData.room) return;
+
+        console.log(`強制重新請求 ${roomName} 的高品質視頻`);
+        
+        roomData.room.remoteParticipants.forEach(async (participant) => {
+          participant.videoTrackPublications.forEach(async (publication) => {
+            if (publication.isSubscribed) {
+              try {
+                // 先取消訂閱再重新訂閱
+                await publication.setSubscribed(false);
+                await new Promise(resolve => setTimeout(resolve, 100));
+                await publication.setSubscribed(true);
+                
+                // 設定為最高品質
+                publication.setVideoQuality(VideoQuality.HIGH);
+                console.log(`重新訂閱並設定高品質: ${participant.identity}`);
+              } catch (error) {
+                console.warn('重新訂閱失敗:', error);
+              }
+            }
+          });
+        });
+      }
+
+      toggleVideoStats(roomName) {
+        const roomData = this.rooms.get(roomName);
+        if (!roomData) return;
+
+        const isVisible = roomData.elements.videoStats.style.display !== 'none';
+        roomData.elements.videoStats.style.display = isVisible ? 'none' : 'block';
+        
+        if (!isVisible && roomData.room && roomData.status === 'connected') {
+          // 開始統計監控
+          this.startStatsMonitoring(roomName);
+        } else if (isVisible) {
+          // 停止統計監控
+          this.stopStatsMonitoring(roomName);
+        }
+      }
+
+      startStatsMonitoring(roomName) {
+        const roomData = this.rooms.get(roomName);
+        if (!roomData || roomData.statsTimer) return;
+
+        console.log(`開始監控房間 ${roomName} 的視頻統計`);
+        
+        // 每2秒更新一次統計
+        roomData.statsTimer = setInterval(() => {
+          this.updateVideoStats(roomName);
+        }, 2000);
+
+        // 立即更新一次
+        this.updateVideoStats(roomName);
+      }
+
+      stopStatsMonitoring(roomName) {
+        const roomData = this.rooms.get(roomName);
+        if (!roomData || !roomData.statsTimer) return;
+
+        console.log(`停止監控房間 ${roomName} 的視頻統計`);
+        clearInterval(roomData.statsTimer);
+        roomData.statsTimer = null;
+      }
+
+      async updateVideoStats(roomName) {
+        const roomData = this.rooms.get(roomName);
+        if (!roomData || !roomData.room) return;
+
+        try {
+          // 獲取視頻軌道統計
+          const participants = Array.from(roomData.room.remoteParticipants.values());
+          if (participants.length === 0) return;
+
+          for (const participant of participants) {
+            const videoPublication = Array.from(participant.videoTrackPublications.values())[0];
+            if (!videoPublication || !videoPublication.track) continue;
+
+            // 使用正確的 LiveKit API 獲取統計
+            const videoStats = await videoPublication.track.getReceiverStats();
+            
+            if (videoStats) {
+              roomData.elements.statsResolution.textContent = 
+                `${videoStats.frameWidth || '--'}x${videoStats.frameHeight || '--'}`;
+              
+              // 計算位元率 (如果有 bytesReceived 和時間戳)
+              const currentBitrate = videoPublication.track.currentBitrate;
+              roomData.elements.statsBitrate.textContent = 
+                currentBitrate ? `${Math.round(currentBitrate / 1000)} kbps` : 
+                (videoStats.bytesReceived ? `${Math.round(videoStats.bytesReceived * 8 / 1000)} kbps` : '--');
+              
+              roomData.elements.statsFramerate.textContent = 
+                `${videoStats.framesPerSecond || videoStats.framesDecoded || '--'} fps`;
+            } else {
+              // 嘗試從 track 屬性獲取基本資訊
+              const dimensions = videoPublication.track.dimensions;
+              if (dimensions) {
+                roomData.elements.statsResolution.textContent = `${dimensions.width}x${dimensions.height}`;
+              }
+              roomData.elements.statsBitrate.textContent = 
+                videoPublication.track.currentBitrate ? `${Math.round(videoPublication.track.currentBitrate / 1000)} kbps` : '--';
+              roomData.elements.statsFramerate.textContent = '--';
+            }
+            
+            break; // 只處理第一個參與者的視頻
+          }
+        } catch (error) {
+          console.warn(`更新視頻統計失敗:`, error);
+          roomData.elements.statsResolution.textContent = 'Error';
+          roomData.elements.statsBitrate.textContent = 'Error';
+          roomData.elements.statsFramerate.textContent = 'Error';
+        }
+      }
+
 
       updateRoomStatus(roomName, status, statusText) {
         const roomData = this.rooms.get(roomName);
